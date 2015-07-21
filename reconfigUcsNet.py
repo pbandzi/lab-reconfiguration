@@ -21,15 +21,15 @@
 #                       [Mandatory] Account Username for UCSM Login
 # -p PASSWORD, --password=PASSWORD
 #                       [Mandatory] Account Password for UCSM Login
-# -n NETWORK, --network=NETWORK
-#                       [Optional] Network config you want to set for POD 
-#                       Available options: FUEL, FOREMAN
+# -f FILE, --file=FILE
+#                       [Optional] Yaml file with network config you want to set for POD 
 #                       If not present only current network config will be printed
 #
 
 import getpass
 import optparse
 import platform
+import yaml
 from UcsSdk import *
 from collections import defaultdict
 from UcsSdk.MoMeta.OrgOrg import OrgOrg
@@ -37,16 +37,6 @@ from UcsSdk.MoMeta.LsServer import LsServer
 from UcsSdk.MoMeta.VnicEther import VnicEther
 from UcsSdk.MoMeta.VnicEtherIf import VnicEtherIf
 
-# Interfaces with assigned vnic templates.
-networks = {
-    "FUEL": ( 
-            ("eth0","fuel-public"), 
-            ("eth1","fuel-tagged") ),
-    "FOREMAN": ( 
-            ("eth0","foreman-storage"), 
-            ("eth1","foreman-control"), 
-            ("eth2","foreman-public"),
-            ("eth3","foreman-traffic") )}
 
 def getpassword(prompt):
     if platform.system() == "Linux":
@@ -119,22 +109,30 @@ def remove_interface(handle=None, vnicEtherDn=None):
     handle.RemoveManagedObject(obj)
 
 
-def set_network(handle=None, network=None):
+def read_yaml_file(yamlFile):
+    """
+    Read vnic config from yaml file
+    """
+    # TODO: add check if vnic templates specified in file exist on UCS
+    with open(yamlFile, 'r') as stream:
+        return yaml.load(stream)
+
+
+def set_network(handle=None, yamlFile=None):
     """
     Configure VLANs on POD according specified network
     """
     # add interfaces and bind them with vNIC templates
     # TODO: make sure MAC address for admin is still same
     print "\nRECONFIGURING VNICs..."
+    network = read_yaml_file(yamlFile)
     for server in get_servers(handle):
-        desired_order = 1
-        for iface, template in networks[network]:
-            add_interface(handle, server.Dn, iface, template, desired_order)
-            desired_order += 1
+        for iface, data in network.iteritems():
+            add_interface(handle, server.Dn, iface, data['template'], data['order'])
         # Remove other interfaces which have not assigned required vnic template
         vnics = get_vnics(handle, server)
         for vnic in vnics:
-            if not any(tmpl in vnic.OperNwTemplName for iface, tmpl in networks[network]):
+            if not any(data['template'] in vnic.OperNwTemplName for iface, data in network.iteritems()):
                 remove_interface(handle, vnic.Dn)
                 print "  {} removed, template: {}".format(vnic.Name, vnic.OperNwTemplName)
 
@@ -155,8 +153,8 @@ if __name__ == "__main__":
                         help="[Mandatory] Account Username for UCSM Login")
         parser.add_option('-p', '--password',dest="password",
                         help="[Mandatory] Account Password for UCSM Login")
-        parser.add_option('-n', '--network',dest="network",
-                        help="[Optional] Network config you want to set on UCS POD1 [fuel or foreman]")
+        parser.add_option('-f', '--file',dest="yamlFile",
+                        help="[Optional] Yaml file contains network config you want to set on UCS POD1")
         (options, args) = parser.parse_args()
 
         if not options.ip:
@@ -170,8 +168,9 @@ if __name__ == "__main__":
 
         handle.Login(options.ip, options.userName, options.password)
 
-        if (options.network != None):           
-            set_network(handle, options.network.upper())
+        if (options.yamlFile != None):
+            print options.yamlFile
+            set_network(handle, options.yamlFile)
         get_network_config(handle)       
         
         handle.Logout()
