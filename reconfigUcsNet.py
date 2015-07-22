@@ -32,10 +32,6 @@ import platform
 import yaml
 from UcsSdk import *
 from collections import defaultdict
-from UcsSdk.MoMeta.OrgOrg import OrgOrg
-from UcsSdk.MoMeta.LsServer import LsServer
-from UcsSdk.MoMeta.VnicEther import VnicEther
-from UcsSdk.MoMeta.VnicEtherIf import VnicEtherIf
 
 
 def getpassword(prompt):
@@ -80,7 +76,7 @@ def get_network_config(handle=None):
                 print '    Vlan: {}'.format(vnicIf.Vnet)
 
 
-def add_interface(handle=None, lsServerDn=None, vnicEther=None, templName=None, order=None):
+def add_interface(handle=None, lsServerDn=None, vnicEther=None, templName=None, order=None, macAddr=None):
     """
     Add interface to server specified by server.DN name
     """
@@ -95,6 +91,7 @@ def add_interface(handle=None, lsServerDn=None, vnicEther=None, templName=None, 
         VnicEther.ORDER: order,
         "adminHostPort": "ANY", 
         VnicEther.ADMIN_VCON: "any", 
+        VnicEther.ADDR: macAddr,
         VnicEther.NW_TEMPL_NAME: templName, 
         VnicEther.MTU: "1500"}
     handle.AddManagedObject(obj, VnicEther.ClassId(), params, True)
@@ -123,12 +120,11 @@ def set_network(handle=None, yamlFile=None):
     Configure VLANs on POD according specified network
     """
     # add interfaces and bind them with vNIC templates
-    # TODO: make sure MAC address for admin is still same
     print "\nRECONFIGURING VNICs..."
     network = read_yaml_file(yamlFile)
-    for server in get_servers(handle):
+    for index, server in enumerate(get_servers(handle)):
         for iface, data in network.iteritems():
-            add_interface(handle, server.Dn, iface, data['template'], data['order'])
+            add_interface(handle, server.Dn, iface, data['template'], data['order'], data['mac-list'][index])
         # Remove other interfaces which have not assigned required vnic template
         vnics = get_vnics(handle, server)
         for vnic in vnics:
