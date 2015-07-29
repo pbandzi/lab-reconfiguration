@@ -22,7 +22,7 @@
 # -p PASSWORD, --password=PASSWORD
 #                       [Mandatory] Account Password for UCSM Login
 # -f FILE, --file=FILE
-#                       [Optional] Yaml file with network config you want to set for POD 
+#                       [Optional] Yaml file with network config you want to set for POD
 #                       If not present only current network config will be printed
 #
 
@@ -30,6 +30,7 @@ import getpass
 import optparse
 import platform
 import yaml
+import time
 from UcsSdk import *
 from collections import defaultdict
 
@@ -53,6 +54,14 @@ def get_servers(handle=None):
         if server.Type == 'instance' and "POD-2" in server.Dn:
             yield server
 
+
+def ack_pending(handle=None, server=None):
+    """
+    Acknowledge pending state of server
+    """
+    handle.AddManagedObject(server, LsmaintAck.ClassId(), {LsmaintAck.DN: server.Dn + "/ack", LsmaintAck.DESCR:"", LsmaintAck.ADMIN_STATE:"trigger-immediate", LsmaintAck.SCHEDULER:"", LsmaintAck.POLICY_OWNER:"local"}, True)
+
+
 def get_vnics(handle=None, server=None):
     """
     Return list of vnics for given server
@@ -66,6 +75,7 @@ def get_network_config(handle=None):
     Print current network config
     """
     print "\nCURRENT NETWORK CONFIG:"
+    print " d - default, t - tagged"
     for server in get_servers(handle):
         print ' {}'.format(server.Name)
         for vnic in get_vnics(handle, server):
@@ -73,7 +83,10 @@ def get_network_config(handle=None):
             print '   {}'.format(vnic.Addr)
             vnicIfs = handle.ConfigResolveChildren(VnicEtherIf.ClassId(), vnic.Dn, None, YesOrNo.TRUE)
             for vnicIf in vnicIfs.OutConfigs.GetChild():
-                print '    Vlan: {}'.format(vnicIf.Vnet)
+                if vnicIf.DefaultNet == 'yes':
+                    print '    Vlan: {}d'.format(vnicIf.Vnet)
+                else:
+                    print '    Vlan: {}t'.format(vnicIf.Vnet)
 
 
 def add_interface(handle=None, lsServerDn=None, vnicEther=None, templName=None, order=None, macAddr=None):
@@ -84,15 +97,15 @@ def add_interface(handle=None, lsServerDn=None, vnicEther=None, templName=None, 
     obj = handle.GetManagedObject(None, LsServer.ClassId(), {LsServer.DN:lsServerDn})
     vnicEtherDn = lsServerDn + "/ether-" + vnicEther
     params = {
-        VnicEther.STATS_POLICY_NAME: "default", 
-        VnicEther.NAME: vnicEther, 
-        VnicEther.DN: vnicEtherDn, 
+        VnicEther.STATS_POLICY_NAME: "default",
+        VnicEther.NAME: vnicEther,
+        VnicEther.DN: vnicEtherDn,
         VnicEther.SWITCH_ID: "A-B",
         VnicEther.ORDER: order,
-        "adminHostPort": "ANY", 
-        VnicEther.ADMIN_VCON: "any", 
+        "adminHostPort": "ANY",
+        VnicEther.ADMIN_VCON: "any",
         VnicEther.ADDR: macAddr,
-        VnicEther.NW_TEMPL_NAME: templName, 
+        VnicEther.NW_TEMPL_NAME: templName,
         VnicEther.MTU: "1500"}
     handle.AddManagedObject(obj, VnicEther.ClassId(), params, True)
 
@@ -133,13 +146,13 @@ def set_network(handle=None, yamlFile=None):
                 print "  {} removed, template: {}".format(vnic.Name, vnic.OperNwTemplName)
 
 
-if __name__ == "__main__":    
-    # Latest urllib2 validate certs by default 
+if __name__ == "__main__":
+    # Latest urllib2 validate certs by default
     # The process wide "revert to the old behaviour" hook is to monkeypatch the ssl module
     # https://bugs.python.org/issue22417
     import ssl
     if hasattr(ssl, '_create_unverified_context'):
-        ssl._create_default_https_context = ssl._create_unverified_context 
+        ssl._create_default_https_context = ssl._create_unverified_context
     try:
         handle = UcsHandle()
         parser = optparse.OptionParser()
@@ -164,11 +177,33 @@ if __name__ == "__main__":
 
         handle.Login(options.ip, options.userName, options.password)
 
+        # Change vnic template if specified in cli option
         if (options.yamlFile != None):
-            print options.yamlFile
             set_network(handle, options.yamlFile)
-        get_network_config(handle)       
-        
+
+        time.sleep(3)
+
+        print "\nCheck if acknowledge is needed..."
+        for server in get_servers(handle):
+            print " {}: {}".format(server.Dn, server.OperState)
+            if server.OperState == "pending-reboot":
+                ack_pending(handle,server)
+                print " Acknowledged."
+
+        print "\nWait until Overall Status of all nodes is OK..."
+        timeout = time.time() + 60*5   #5 minutes timeout
+        while True:
+            list_of_states = []
+            for server in get_servers(handle):
+                list_of_states.append(server.OperState)
+            print " {}".format(list_of_states)
+            if all(state == "ok" for state in list_of_states) or time.time() > timeout:
+                break
+            time.sleep(2)
+
+        # Show current vnic MACs and VLANs
+        get_network_config(handle)
+
         handle.Logout()
 
     except Exception, err:
