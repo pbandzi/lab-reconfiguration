@@ -31,6 +31,7 @@ import optparse
 import platform
 import yaml
 import time
+import sys
 from UcsSdk import *
 from collections import defaultdict
 
@@ -40,8 +41,6 @@ INSTALLER = "POD-21"
 def getpassword(prompt):
     if platform.system() == "Linux":
         return getpass.unix_getpass(prompt=prompt)
-    elif platform.system() == "Windows" or platform.system() == "Microsoft":
-        return getpass.win_getpass(prompt=prompt)
     else:
         return getpass.getpass(prompt=prompt)
 
@@ -237,4 +236,4 @@ if __name__ == "__main__":
         print '-'*60
         traceback.print_exc(file=sys.stdout)
         print '-'*60
-        exit(1)
+        sys.exit(1)
