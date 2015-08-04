@@ -1,5 +1,4 @@
 ## lab-reconfiguration
-
 Script reconfigure UCSM vnics for varios OPNFV deployers
 
 ```
